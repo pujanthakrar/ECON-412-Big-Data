@@ -1,0 +1,383 @@
+---
+title: "Final Project Plots"
+author: "John Macke"
+date: "May 24, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(foreign)
+library(bnstruct)
+require(graphics)
+library(dplyr)
+library(MASS)
+library(caret)
+library(glmnet)
+
+```
+
+
+```{r}
+
+year3=read.arff("3year.arff")
+
+year = year3[colSums(is.na(year3)) < 499]
+#year = knn.impute(year, k = 10, cat.var = 1:ncol(year), to.impute = 1:nrow(year), using = 1:nrow(year))
+
+for(k in 1:(ncol(year) - 1)){
+  if(any(is.na(year[k]))){
+    year[which(is.na(year[k])), k] = median(as.numeric(unlist(year[k])), na.rm = T)
+  }
+}
+
+year1 = year[,-18]
+year.new4 = year1[,-c(18,7,14,13,39,40,19,38,44,8,17,4,16,24,41,2,10,21,28,34,46)]
+
+
+```
+
+
+```{r}
+
+# boxplot
+year.new = year[, -c(5,15,30)]
+boxplot(as.matrix(year.new[,-ncol(year.new)]))
+
+# correlation plot
+library(corrplot)
+year.matrix = as.matrix(year[,-ncol(year)])
+corrplot(cor(year.matrix[,-ncol(year)]), tl.pos = 'n', type = "lower")
+
+# VIF for correlations
+reg = lm(class ~., data = year)
+library(car)
+vif(reg)
+
+year1 = year[,-18]
+reg1 = lm(as.numeric(class) ~ ., data = year1)
+v = vif(reg1)
+
+desc(v)
+
+alias(reg1)
+
+# 
+library(ggplot2)
+ggplot(year, aes(x = Attr1, y = Attr58, color = class)) + geom_point(shape=1) + ylim(-2,2) + xlim(-2,2)
+
+```
+
+
+
+```{r}
+
+# principle components analysis
+pca = prcomp(year[,-ncol(year)], scale. = T)
+summary(pca)
+plot(pca)
+max(pca$rotation[1])
+pca$rotation
+
+
+# stepwise selection
+year1 = year[,-18]
+# year.new3 = year1[,-c(7,14,13,43,44,19,20,42,49,8,17,4,16,26,46,2,10,23,31,38,51)]
+year.new4 = year1[,-c(18,7,14,13,39,40,19,38,44,8,17,4,16,24,41,2,10,21,28,34,46)]
+
+
+
+# #--------------------------
+# 
+# # set seed and split into training, validation, and testing
+# set.seed(123)
+# train=sample(1:nrow(year.new4), round(nrow(year.new4)*.6), replace=F)
+# datatrain=year.new4[train,]
+# datatest=year.new4[-train,]
+# train=sample(1:nrow(datatest), round(nrow(datatest)*.5), replace=F)
+# datavalid=datatest[train,]
+# datatest=datatest[-train,]
+# 
+# #--------------------------
+
+
+
+```
+
+
+```{r}
+
+library(DMwR)
+set.seed(123)
+year.smote = SMOTE(class ~ ., year.new4, perc.over = 600, k = 5, perc.under = 237, learner = NULL)
+
+train=sample(1:nrow(year.smote), round(nrow(year.smote)*.6), replace=F)
+datatrain=year.smote[train,]
+datatest=year.smote[-train,]
+train=sample(1:nrow(datatest), round(nrow(datatest)*.5), replace=F)
+datavalid=datatest[train,]
+datatest=datatest[-train,]
+
+```
+
+
+```{r}
+
+# stepwise selection for logistic regression
+
+reg3 = glm(class ~., data = year.smote, family = binomial(link = "logit"))
+
+step.back = stepAIC(reg3, direction = "backward")
+# best model from backward step is below
+# Attr1 + Attr3 + Attr5 + Attr6 + Attr9 + Attr12 + Attr15 +
+#     Attr22 + Attr24 + Attr25 + Attr28 + Attr30 + Attr32 + Attr33 +
+#     Attr34 + Attr35 + Attr36 + Attr39 + Attr40 + Attr41 + Attr48 +
+#     Attr52 + Attr53 + Attr54 + Attr55 + Attr57 + Attr58 + Attr59 +
+#     Attr63 + Attr64
+
+step.both = stepAIC(reg3, direction = "both")
+# best model from both step is below
+# Attr1 + Attr3 + Attr5 + Attr6 + Attr9 + Attr12 + Attr15 + 
+#     Attr22 + Attr24 + Attr25 + Attr28 + Attr30 + Attr32 + Attr33 + 
+#     Attr34 + Attr35 + Attr36 + Attr39 + Attr40 + Attr41 + Attr48 + 
+#     Attr52 + Attr53 + Attr54 + Attr55 + Attr57 + Attr58 + Attr59 + 
+#     Attr63 + Attr64
+
+# Logistic Regression
+mod.logistic = glm(class ~ Attr1 + Attr3 + Attr5 + Attr6 + Attr9 + Attr12 + Attr15 +
+                      Attr22 + Attr24 + Attr25 + Attr28 + Attr30 + Attr32 + Attr33 +
+                      Attr34 + Attr35 + Attr36 + Attr39 + Attr40 + Attr41 + Attr48 +
+                      Attr52 + Attr53 + Attr54 + Attr55 + Attr57 + Attr58 + Attr59 +
+                      Attr63 + Attr64,
+                      family = binomial(link = "logit"), 
+                      data = datatrain)
+summary(mod.logistic)
+
+# fit on validation data
+valid = predict(mod.logistic, datavalid, type="response", se=TRUE)
+
+#creating threshold and calculating confusion matrix
+threshold = 0.4
+t = ifelse(valid$fit >= threshold, 1, 0)
+c = confusionMatrix(factor(t), factor(datavalid$class))
+c
+
+prec = c$table[4]/(c$table[2]+c$table[4])
+prec
+rec = c$table[4]/(c$table[3]+c$table[4])
+rec
+
+```
+
+
+
+
+```{r}
+
+# ridge
+#------
+
+library(caret)
+library(glmnet)
+library(plotmo)
+# put into matrix for glmnet function 
+x = as.matrix(datatrain[,-ncol(datatrain)])
+y = as.matrix(datatrain[,ncol(datatrain)])
+
+# run ridge regression with cross validation
+cv.ridge <- cv.glmnet(x, y, family='binomial', alpha=0, parallel=TRUE, standardize=TRUE,
+                      type.measure='mse')
+best_lambda = cv.ridge$lambda.min
+print(best_lambda)
+plot(cv.ridge)
+
+# run ridge regression
+ridge = glmnet(x,y, family = "binomial", alpha = 0)
+
+# get coefficients from optimal lambda found using cv.glmnet
+ridge.coef = coef(ridge, s = best_lambda, exact = T)
+
+# plot decay of parameters
+plot(ridge,xvar="lambda",label=T)
+plot_glmnet(ridge, xvar = "lambda", label = 20)
+
+# plot the deviance explained
+plot(ridge,xvar='dev',label=T)
+
+# predict 
+valid.x = as.matrix(datavalid[,1:(ncol(datavalid)-1)])
+ridge.pred = predict(ridge, newx = valid.x, type = "response", s = best_lambda)
+
+# calculate mean squared error
+threshold = 0.3
+t = ifelse(ridge.pred >= threshold, 1, 0)
+ridge.resid = t-datavalid$class
+mse.ridge = mean(ridge.resid^2)
+mse.ridge
+
+#creating threshold and calculating confusion matrix
+threshold = 0.4
+t = ifelse(ridge.pred >= threshold, 1, 0)
+c.ridge = confusionMatrix(factor(t), factor(datavalid$class))
+c.ridge
+
+prec = c$table[4]/(c$table[2]+c$table[4])
+prec
+rec = c$table[4]/(c$table[3]+c$table[4])
+rec
+
+
+```
+
+
+```{r}
+
+# LASSO
+#------
+
+x = as.matrix(datatrain[,-ncol(datatrain)])
+y = as.matrix(datatrain[,ncol(datatrain)])
+
+cv.lasso <- cv.glmnet(x, y, family='binomial', alpha=1, parallel=TRUE, standardize=TRUE,
+                      type.measure='mse')
+best_lambda.lasso = cv.lasso$lambda.min
+print(best_lambda.lasso)
+fit = cv.ridge$glmnet.fit
+plot(cv.lasso)
+
+# run lasso regression
+lasso = glmnet(x,y, family = "binomial", alpha = 1)
+
+# plot decay of parameters
+plot_glmnet(lasso, xvar = "lambda", label = 10)
+
+# predict 
+valid.x = as.matrix(datavalid[,1:(ncol(datavalid)-1)])
+lasso.pred = predict(lasso, newx = valid.x, type = "response", s = best_lambda)
+
+threshold = 0.4
+t = ifelse(lasso.pred >= threshold, 1, 0)
+c.lasso = confusionMatrix(factor(t), factor(datavalid$class))
+c.lasso
+
+prec = c$table[4]/(c$table[2]+c$table[4])
+prec
+rec = c$table[4]/(c$table[3]+c$table[4])
+rec
+
+
+
+
+
+```
+
+
+
+```{r}
+
+# trees
+#------
+
+#standard tree
+class.tree <- rpart(datatrain$class ~ ., data = datatrain, method = "class",cp=0,minsplit = 200)
+# count number of leaves
+length(class.tree$frame$var[class.tree$frame$var == "<leaf>"])
+## plot tree
+prp(class.tree, type = 1, extra = 1,under=TRUE, split.font = 2, varlen = -10,box.col = ifelse(class.tree$frame$var=="<var>",'gray','white'), main = "Figure 10: Default Classification Tree")  
+
+
+# fit default tree to the validation set
+class.tree.valid <- predict(class.tree,datavalid,type = "class")
+# generate confusion matrix for training data
+
+c=confusionMatrix(class.tree.valid, as.factor(datavalid$class))
+c
+
+prec = c$table[4]/(c$table[2]+c$table[4])
+prec
+rec = c$table[4]/(c$table[3]+c$table[4])
+rec
+
+#cross validation classification tree
+cv.ct <- rpart(datatrain$class ~ ., data = datatrain, method = "class", 
+               cp = 0.00001, minsplit = 200, xval = 10)
+# use printcp() to print the table. 
+printcp(cv.ct)
+
+# prune by lower cp
+pruned.ct <- prune(cv.ct, 
+                   cp = cv.ct$cptable[which.min(cv.ct$cptable[,"xerror"]),"CP"])
+length(pruned.ct$frame$var[pruned.ct$frame$var == "<leaf>"])
+prp(pruned.ct, type = 1, extra = 1, split.font = 1, varlen = -10) 
+
+pruned.ct.valid <- predict(pruned.ct,datavalid,type = "class")
+# generate confusion matrix for training data
+
+c=confusionMatrix(pruned.ct.valid, as.factor(datavalid$class))
+
+c
+
+
+prec = c$table[4]/(c$table[2]+c$table[4])
+prec
+rec = c$table[4]/(c$table[3]+c$table[4])
+rec
+
+#best pruned trees
+#0.74757+0.016560 = 0.76413
+#we use cp at xerror = 0.76311
+best.pruned.ct <- prune(cv.ct, cp = 0.00752427 )
+prp(best.pruned.ct, type = 1, extra = 1, under = TRUE, split.font = 1, varlen = -10, 
+    box.col=ifelse(best.pruned.ct$frame$var == "<leaf>", 'gray', 'white'), main = "Figure 15: Best Pruned Tree") 
+
+best.pruned.valid <- predict(best.pruned.ct,datavalid,type = "class")
+# generate confusion matrix for training data
+c = confusionMatrix(best.pruned.valid, as.factor(datavalid$class))
+
+c
+prec = c$table[4]/(c$table[2]+c$table[4])
+prec
+rec = c$table[4]/(c$table[3]+c$table[4])
+rec
+
+################
+
+## random forest
+rf <- randomForest(as.factor(datatrain$class) ~ ., data = datatrain, ntree = 500, 
+                   mtry = 4, nodesize = 5, importance = TRUE)  
+
+## variable importance plot
+varImpPlot(rf, type = 1,main="Figure 16: Relative Influence Plot")
+
+## confusion matrix
+rf.pred <- predict(rf, datavalid)
+c=confusionMatrix(rf.pred, as.factor(datavalid$class))
+
+c
+prec = c$table[4]/(c$table[2]+c$table[4])
+prec
+rec = c$table[4]/(c$table[3]+c$table[4])
+rec
+
+
+## rf on testing set
+rf.test <- predict(rf, datatest)
+c=confusionMatrix(rf.test, as.factor(datatest$class))
+
+c
+prec = c$table[4]/(c$table[2]+c$table[4])
+prec
+rec = c$table[4]/(c$table[3]+c$table[4])
+rec
+
+```
+
+
+
+
+
+
+
+
+
